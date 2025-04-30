@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build & Run C++ (PowerShell)",
+      "type": "shell",
+      "command": "g++ main.cpp -o server.exe -lws2_32 -mconsole; if ($?) { .\\server.exe }",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}
