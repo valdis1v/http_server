@@ -8,6 +8,7 @@
 #include <sstream>
 #include <map>
 #include <functional>
+#include <optional>
 
 SOCKET LISTEN_ON; 
 struct sockaddr_in SERVER; 
@@ -18,91 +19,153 @@ using std::string;
 #define DISCONNECTED 2
 #define INVALID 3
 
+#define GET 1
+#define POST 2
+#define DELETE 3
+#define PUT 4
 
-class HTTP_CLIENT
+class HTTP_CLIENT_ROUTES
 {
-
     public:
-        std::function<void(char* request, SOCKET Client)> GetFallback   ; 
-        std::function<void(char* request, SOCKET Client)> PostFallback  ; 
-        std::function<void(char* request, SOCKET Client)> DeleteFallback; 
-        HTTP_CLIENT(int _port, std::function<void( char* request, SOCKET Client)> _GetFallback, std::function<void(char* request, SOCKET Client)> _PostFallback, std::function<void(char* request, SOCKET Client)> _DeleteFallback)
+        struct route {
+            // Muss strikt so aussehen "/api/api/api/api/"
+            string route;
+            std::function<void(char*, SOCKET)> handler;
+        };
+        std::map<string, std::function<void(char* request, SOCKET Client)>> GET_ROUTES; 
+        std::map<string, std::function<void(char* request, SOCKET Client)>> POST_ROUTES; 
+        std::map<string, std::function<void(char* request, SOCKET Client)>> DELETE_ROUTES; 
+        std::map<string, std::function<void(char* request, SOCKET Client)>> PUT_ROUTES; 
+        std::function<void()> errorhandler; 
+
+
+        HTTP_CLIENT_ROUTES(route _Get, route _Post, route _Delete, route _Put, std::function<void()> _errorhandler)
+        {
+            GET_ROUTES.insert(std::make_pair(_Get.route, _Get.handler));
+            POST_ROUTES.insert(std::make_pair(_Post.route, _Post.handler));
+            DELETE_ROUTES.insert(std::make_pair(_Delete.route, _Delete.handler));
+            PUT_ROUTES.insert(std::make_pair(_Put.route, _Put.handler));
+            errorhandler = _errorhandler;
+            initClient();  
+        }
+                    // GET - PUT defined oben
+        void registerRoute(int requestType, route newRoute)
+        {
+            switch(requestType)
+            {
+                case GET:
+                    GET_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
+                case POST:
+                    POST_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
+                case DELETE:
+                    DELETE_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
+                case PUT:
+                    PUT_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
+                default:
+                    errorhandler();
+            }
+        }
+    private:
+
+    void recieveAndFallBack(SOCKET Client)
+    {
+        char buffer[1024];
+        int bytesReceived = recv(Client, buffer, sizeof(buffer) - 1, 0); // Empfange Daten
+        if (bytesReceived > 0) {
+            buffer[bytesReceived] = '\0'; // Null-Terminierung hinzufügen
+            std::string request(buffer); 
+            std::cout << "Request:\n" << request << std::endl;
+
+            // HTTP-Request parsen
+            std::istringstream stream(request);
+            std::string method, path, version;
+            stream >> method >> path >> version;
+
+            // Route extrahieren
+            std::cout << "HTTP Method: " << method << std::endl;
+            std::cout << "Requested Route: " << path << std::endl;
+            std::cout << "HTTP Version: " << version << std::endl;
+
+            // Weiterverarbeitung basierend auf der Methode
+            if (method == "GET") {
+                callRegisteredRoute(GET, path, buffer, Client);
+            } else if (method == "POST") {
+                callRegisteredRoute(POST, path, buffer, Client);
+            } else if (method == "PUT") {
+                callRegisteredRoute(PUT, path, buffer, Client);
+            } else if (method == "DELETE") {
+                callRegisteredRoute(DELETE, path, buffer, Client);
+            } else {
+                errorhandler();
+            }
+        }
+        closesocket(Client);
+    }
+
+        void callRegisteredRoute(int method, const string& route, char* request, SOCKET Client)
+        {
+            switch (method)
+            {
+                case GET:
+                {
+                    auto it = GET_ROUTES.find(route);
+                    if (it != GET_ROUTES.end()) {
+                        it->second(request, Client);
+                    } else {
+                        std::cerr << "GET route not found: " << route << std::endl;
+                        errorhandler();
+                    }
+                    break;
+                }
+                case POST:
+                {
+                    auto it = POST_ROUTES.find(route);
+                    if (it != POST_ROUTES.end()) {
+                        it->second(request, Client); 
+                    } else {
+                        std::cerr << "POST route not found: " << route << std::endl;
+                        errorhandler();
+                    }
+                    break;
+                }
+                case DELETE:
+                {
+                    auto it = DELETE_ROUTES.find(route);
+                    if (it != DELETE_ROUTES.end()) {
+                        it->second(request, Client);
+                    } else {
+                        std::cerr << "DELETE route not found: " << route << std::endl;
+                        errorhandler();
+                    }
+                    break;
+                }
+                case PUT:
+                {
+                    auto it = PUT_ROUTES.find(route);
+                    if (it != PUT_ROUTES.end()) {
+                        it->second(request, Client);
+                    } else {
+                        std::cerr << "PUT route not found: " << route << std::endl;
+                        errorhandler();
+                    }
+                    break;
+                }
+                default:
+                    std::cerr << "Unsupported HTTP method: " << method << std::endl;
+                    errorhandler();
+                    break;
+            }
+        }
+        
+        void initClient(int _port = 4000)
         {
             WSADATA wsa ;
             WSAStartup(MAKEWORD(2,2), &wsa);
-
-            GetFallback = _GetFallback;
-            PostFallback = _PostFallback;
-            DeleteFallback = _DeleteFallback; 
-
-            port = _port; 
-          
-            soc_init();
+            soc_init(_port);
             soc_ready();
         }
 
-        void Listen()
-        {
-            while(true)
-            {
-                while (true)
-                {
-                    SOCKET CLIENT = accept(LISTEN_ON, NULL, NULL);
-                    std::thread connection([this, CLIENT]() { recieveAndFallBack(CLIENT); });
-                    connection.detach();
-                }
-            }
-        }
-
-
-
-    private:
-
-        SOCKET TCPSOC; 
-        int port; 
-
-        void recieveAndFallBack(SOCKET ClientSocket)
-        {
-            char buffer[1024];
-            int bytesReceived = recv(ClientSocket, buffer, sizeof(buffer) - 1, 0); // Empfange Daten
-            if (bytesReceived > 0) {
-                buffer[bytesReceived] = '\0'; // wichtig
-                std::string request(buffer); 
-                std::cout << request << std::endl;
-
-                std::istringstream stream(request);
-                std::string method, path, version;
-                stream >> method >> path >> version;
-
-                // request.c_str() direkt in char* kopieren
-                char* temp = new char[request.size() + 1];
-                strcpy(temp, request.c_str());
-
-                if (method == "GET") {
-                    GetFallback(temp, ClientSocket);
-                } else if (method == "POST") {
-                    PostFallback(temp, ClientSocket);
-                } else if (method == "DELETE") {
-                    DeleteFallback(temp, ClientSocket);
-                }
-
-                delete[] temp;
-            }
-            closesocket(ClientSocket);   
-        }
-
-
-        void soc_ready()
-        {
-            int x = listen(LISTEN_ON,SOMAXCONN);
-            if(x == SOCKET_ERROR)
-            {
-                exit(-1); 
-            }
-
-        }
-
-        void soc_init()
+        void soc_init(int port = 4000)
         {
             LISTEN_ON = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); 
             if (LISTEN_ON == INVALID_SOCKET) { std::cerr << "socket failed\n"; exit(1); }
@@ -123,6 +186,31 @@ class HTTP_CLIENT
             SERVER.sin_port = htons(port); // localhost:4200
             bind(LISTEN_ON, (SOCKADDR*)&SERVER, sizeof(SERVER));
         }
+
+        void soc_ready()
+        {
+            int x = listen(LISTEN_ON,SOMAXCONN);
+            if(x == SOCKET_ERROR)
+            {
+                exit(-1); 
+            }
+
+        }
+
+        void Listen()
+        {
+            while(true)
+            {
+                while (true)
+                {
+                    SOCKET CLIENT = accept(LISTEN_ON, NULL, NULL);
+                    std::thread connection([this, CLIENT]() { recieveAndFallBack(CLIENT); });
+                    connection.detach();
+                }
+            }
+        }
+
+
 };
 
 class HTTP_RESPONSE
@@ -173,46 +261,67 @@ class HTTP_RESPONSE
 };
 
 
-void sendResponse(SOCKET CLIENT, string httpV)
+
+
+void sendResponse(SOCKET CLIENT, const string& httpV, const string& body, const string& contentType = "text/html")
 {
-    HTTP_RESPONSE http(CLIENT, "text/html", "no-store", httpV, OK);
-    http.resBuff = "<html><body><h1>Hello, World!</h1></body></html>"; 
+    HTTP_RESPONSE http(CLIENT, contentType, "no-store", httpV, OK);
+    http.resBuff = body;
     char* response = http.build_res(); 
 
     std::cout << response << std::endl;
     send(CLIENT, response , strlen(response), 0 );
-    delete response; 
+    delete[] response; // korrekt: delete[] statt delete
 }
 
-void verarbeitungHTTP(std::string buffer, SOCKET responseTo)
+
+
+class JSON_RAW
 {
-    int loc = buffer.find("HTTP/");
-    std::string httpVersion = buffer.substr(loc, 8); // wichtig für antwort
-    sendResponse(responseTo, httpVersion);
-}
+    public:
+        string data ;
+        JSON_RAW(std::vector<string> keys, std::vector<string> values)
+        {
+            this->data = buildJson(keys, values);
+        }
+
+    private:
+        
+        string buildJson(std::vector<string> keys, std::vector<string> values)
+        {
+            if (std::size(keys) != std::size(values))
+            {
+                throw E_INVALIDARG;
+            };
+            std::string temp; 
+            temp.append("{\n");
+            for (int i = 0; i < std::size(values); i++)
+            {
+                temp.append("  \"" + keys[i] + "\": \"" + values[i] + "\"");
+                if (i != keys.size() - 1) temp.append(",\n"); else temp.append("\n");
+            }
+            temp.append("}\n");
 
 
-void recieve(SOCKET CLIENT)
-{
-    char buffer[1024];
-    int bytesReceived = recv(CLIENT, buffer, sizeof(buffer) - 1, 0); // Empfange Daten
-    if (bytesReceived > 0) {
-        buffer[bytesReceived] = '\0'; // wichtig
-        std::string request(buffer); 
-        std::cout << request << std::endl;
-        verarbeitungHTTP(request, CLIENT);   
-    }
-    closesocket(CLIENT);
-}
+            return temp; 
+        }
+};
+
 
 
 int main ()
 {
-    HTTP_CLIENT client( 4200,
-        [](char* request, SOCKET Client) { sendResponse(Client, HTTP_VSTANDART); },
-        [](char* request, SOCKET Client) { std::cout << "POST request received: " << request << std::endl; },
-        [](char* request, SOCKET Client) { std::cout << "DELETE request received: " << request << std::endl; }
-    );
-    client.Listen();
+    JSON_RAW data(std::vector<string>{"Name", "Alter"}, std::vector<string>{"Paul", "18"});
+    HTTP_CLIENT_ROUTES::route Get = {"/api/hello", [](char* request, SOCKET Client)
+    {
+        sendResponse(Client, HTTP_VSTANDART, "Hello"); 
+    }};
+    HTTP_CLIENT_ROUTES::route Post = {"/", [](char* request, SOCKET Client){ }};
+    HTTP_CLIENT_ROUTES::route Put = {"/", [](char* request, SOCKET Client){ }};
+    HTTP_CLIENT_ROUTES::route Delete = {"/", [](char* request, SOCKET Client){ }};
+    std::function<void()> Errorh = []() {}; 
+    HTTP_CLIENT_ROUTES client(Get,Post,Delete,Put,Errorh); 
+    
+
     return 0 ;
 }

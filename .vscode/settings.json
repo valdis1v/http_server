@@ -61,6 +61,7 @@
         "ratio": "cpp",
         "stop_token": "cpp",
         "map": "cpp",
-        "xtree": "cpp"
+        "xtree": "cpp",
+        "sstream": "cpp"
     }
 }
