@@ -62,6 +62,12 @@
         "stop_token": "cpp",
         "map": "cpp",
         "xtree": "cpp",
-        "sstream": "cpp"
+        "sstream": "cpp",
+        "filesystem": "cpp",
+        "algorithm": "cpp",
+        "chrono": "cpp",
+        "forward_list": "cpp",
+        "fstream": "cpp",
+        "iomanip": "cpp"
     }
 }

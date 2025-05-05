@@ -9,6 +9,9 @@
 #include <map>
 #include <functional>
 #include <optional>
+#include <WinBase.h>
+#include <filesystem>
+#include <fstream>
 
 SOCKET LISTEN_ON; 
 struct sockaddr_in SERVER; 
@@ -21,7 +24,7 @@ using std::string;
 
 #define GET 1
 #define POST 2
-#define DELETE 3
+#define _DELETE 3
 #define PUT 4
 
 class HTTP_CLIENT_ROUTES
@@ -55,52 +58,72 @@ class HTTP_CLIENT_ROUTES
             {
                 case GET:
                     GET_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
+                    break;
                 case POST:
                     POST_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
-                case DELETE:
+                    break;
+                case _DELETE:
                     DELETE_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
+                    break;
                 case PUT:
                     PUT_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
+                    break;
                 default:
                     errorhandler();
+                    break; 
             }
         }
+
+        void Listen()
+        {
+            while(true)
+            {
+                while (true)
+                {
+                    SOCKET CLIENT = accept(LISTEN_ON, NULL, NULL);
+                    std::thread connection([this, CLIENT]() { recieveAndFallBack(CLIENT); });
+                    connection.detach();
+                }
+            }
+        }
+
     private:
 
-    void recieveAndFallBack(SOCKET Client)
-    {
-        char buffer[1024];
-        int bytesReceived = recv(Client, buffer, sizeof(buffer) - 1, 0); // Empfange Daten
-        if (bytesReceived > 0) {
-            buffer[bytesReceived] = '\0'; // Null-Terminierung hinzufügen
-            std::string request(buffer); 
-            std::cout << "Request:\n" << request << std::endl;
+        SOCKET LISTEN_ON;
+        void recieveAndFallBack(SOCKET Client)
+        {
+            char buffer[1024];
+            int bytesReceived = recv(Client, buffer, sizeof(buffer) - 1, 0); // Empfange Daten
+            if (bytesReceived > 0) {
+                buffer[bytesReceived] = '\0'; // Null-Terminierung hinzufügen
+                std::string request(buffer); 
+                std::cout << "Request:\n" << request << std::endl;
 
-            // HTTP-Request parsen
-            std::istringstream stream(request);
-            std::string method, path, version;
-            stream >> method >> path >> version;
+                // HTTP-Request parsen
+                std::istringstream stream(request);
+                std::string method, path, version;
+                stream >> method >> path >> version;
 
-            // Route extrahieren
-            std::cout << "HTTP Method: " << method << std::endl;
-            std::cout << "Requested Route: " << path << std::endl;
-            std::cout << "HTTP Version: " << version << std::endl;
+                // Route extrahieren
+                std::cout << "HTTP Method: " << method << std::endl;
+                std::cout << "Requested Route: " << path << std::endl;
+                std::cout << "HTTP Version: " << version << std::endl;
 
-            // Weiterverarbeitung basierend auf der Methode
-            if (method == "GET") {
-                callRegisteredRoute(GET, path, buffer, Client);
-            } else if (method == "POST") {
-                callRegisteredRoute(POST, path, buffer, Client);
-            } else if (method == "PUT") {
-                callRegisteredRoute(PUT, path, buffer, Client);
-            } else if (method == "DELETE") {
-                callRegisteredRoute(DELETE, path, buffer, Client);
-            } else {
-                errorhandler();
+                // Weiterverarbeitung basierend auf der Methode
+                if (method == "GET") {
+                    callRegisteredRoute(GET, path, buffer, Client);
+                } else if (method == "POST") {
+                    callRegisteredRoute(POST, path, buffer, Client);
+                } else if (method == "PUT") {
+                    callRegisteredRoute(PUT, path, buffer, Client);
+                } else if (method == "DELETE") {
+                    callRegisteredRoute(_DELETE, path, buffer, Client);
+                } else {
+                    errorhandler();
+                }
             }
+            closesocket(Client);
         }
-        closesocket(Client);
-    }
 
         void callRegisteredRoute(int method, const string& route, char* request, SOCKET Client)
         {
@@ -128,7 +151,7 @@ class HTTP_CLIENT_ROUTES
                     }
                     break;
                 }
-                case DELETE:
+                case _DELETE:
                 {
                     auto it = DELETE_ROUTES.find(route);
                     if (it != DELETE_ROUTES.end()) {
@@ -197,18 +220,7 @@ class HTTP_CLIENT_ROUTES
 
         }
 
-        void Listen()
-        {
-            while(true)
-            {
-                while (true)
-                {
-                    SOCKET CLIENT = accept(LISTEN_ON, NULL, NULL);
-                    std::thread connection([this, CLIENT]() { recieveAndFallBack(CLIENT); });
-                    connection.detach();
-                }
-            }
-        }
+
 
 
 };
@@ -219,7 +231,7 @@ class HTTP_RESPONSE
     #define NOTFOUND "404 Not Found"
     #define FORBIDDEN "403 Forbidden"
     #define ISERVERE "500 Internal Server Error"
-    #define HTTP_VSTANDART "HTTP/ 1.1"
+    #define HTTP_VSTANDART "HTTP/1.1"
 
     public:
         string CT;
@@ -263,7 +275,7 @@ class HTTP_RESPONSE
 
 
 
-void sendResponse(SOCKET CLIENT, const string& httpV, const string& body, const string& contentType = "text/html")
+void sendResponse(SOCKET CLIENT, const string& httpV, const string& body, const string& contentType = "text/html; charset=utf-8")
 {
     HTTP_RESPONSE http(CLIENT, contentType, "no-store", httpV, OK);
     http.resBuff = body;
@@ -273,6 +285,7 @@ void sendResponse(SOCKET CLIENT, const string& httpV, const string& body, const 
     send(CLIENT, response , strlen(response), 0 );
     delete[] response; // korrekt: delete[] statt delete
 }
+
 
 
 
@@ -307,6 +320,60 @@ class JSON_RAW
         }
 };
 
+class WEBSERVE
+{
+    public:
+
+        HTTP_CLIENT_ROUTES* server; 
+        WEBSERVE(HTTP_CLIENT_ROUTES* _server)
+        : server(_server)
+        {
+            SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, FALSE };
+            if (GetFileAttributesA("static") == INVALID_FILE_ATTRIBUTES) {
+                if (!CreateDirectoryA("static", &sa)) {
+                    std::cerr << "Failed to create 'static' directory. Error: " << GetLastError() << std::endl;
+                }
+            }
+
+            serveFiles();
+        }
+    
+    private:
+
+        void serveFiles()
+        {
+            std::string path = "./static";
+            for (const auto & entry : std::filesystem::directory_iterator(path))
+            {
+                if(entry.path().extension() == ".html")
+                {
+                    string route = "/" + entry.path().filename().string();
+                    string data = readHTMLFile(entry.path().string());
+                    HTTP_CLIENT_ROUTES::route GetHTML = { route , [data](char* request, SOCKET Client) {
+                        sendResponse(Client, HTTP_VSTANDART, data);
+                    }};
+                    server->registerRoute(GET, GetHTML);
+                }
+            }
+        }
+
+        std::string readHTMLFile(string path)
+        {
+            std::ifstream file(path);
+            if (!file.is_open())
+            {
+            std::cerr << "Failed to open file: " << path << std::endl;
+                return "Notfound";
+            }
+
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            file.close();
+
+            std::string content = buffer.str();
+            return content; 
+        }
+};
 
 
 int main ()
@@ -316,12 +383,23 @@ int main ()
     {
         sendResponse(Client, HTTP_VSTANDART, "Hello"); 
     }};
+    HTTP_CLIENT_ROUTES::route Get2 = {"/api/moin", [](char* request, SOCKET Client)
+    {
+        sendResponse(Client, HTTP_VSTANDART, "Moin"); 
+    }};
     HTTP_CLIENT_ROUTES::route Post = {"/", [](char* request, SOCKET Client){ }};
     HTTP_CLIENT_ROUTES::route Put = {"/", [](char* request, SOCKET Client){ }};
     HTTP_CLIENT_ROUTES::route Delete = {"/", [](char* request, SOCKET Client){ }};
     std::function<void()> Errorh = []() {}; 
     HTTP_CLIENT_ROUTES client(Get,Post,Delete,Put,Errorh); 
-    
+    client.registerRoute(GET, Get2);
 
+    WEBSERVE wclient(&client);
+
+    client.Listen();
+    for (const auto & route : client.GET_ROUTES)
+    {
+        std::cout << route.first;
+    }
     return 0 ;
 }
