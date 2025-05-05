@@ -74,6 +74,28 @@ class HTTP_CLIENT_ROUTES
             }
         }
 
+        std::vector<string> createRouteMap()
+        {
+            std::vector<string> routes; 
+            for (const auto & entries : GET_ROUTES)
+            {
+                routes.push_back(entries.first + "  GET");
+            }
+            for (const auto & entries : POST_ROUTES)
+            {
+                routes.push_back(entries.first + "  POST");
+            }
+            for (const auto & entries : DELETE_ROUTES)
+            {
+                routes.push_back(entries.first + "  DELETE");
+            }
+            for (const auto & entries : PUT_ROUTES)
+            {
+                routes.push_back(entries.first + "  PUT");
+            }
+            return routes; 
+        }
+
         void Listen()
         {
             while(true)
@@ -92,14 +114,25 @@ class HTTP_CLIENT_ROUTES
         SOCKET LISTEN_ON;
         void recieveAndFallBack(SOCKET Client)
         {
+            std::string request; 
             char buffer[1024];
-            int bytesReceived = recv(Client, buffer, sizeof(buffer) - 1, 0); // Empfange Daten
+            int bytesReceived; 
+            while ((bytesReceived = recv(Client, buffer, sizeof(buffer), 0)) > 0) {
+                request.append(buffer, bytesReceived);
+                if (request.find("\r\n\r\n") != std::string::npos) {
+                    break;
+                }
+            }
+
+            if (request.empty()) {
+                closesocket(Client);
+                return;
+            }
             if (bytesReceived > 0) {
-                buffer[bytesReceived] = '\0'; // Null-Terminierung hinzufügen
+                buffer[bytesReceived] = '\0'; 
                 std::string request(buffer); 
                 std::cout << "Request:\n" << request << std::endl;
 
-                // HTTP-Request parsen
                 std::istringstream stream(request);
                 std::string method, path, version;
                 stream >> method >> path >> version;
@@ -109,7 +142,6 @@ class HTTP_CLIENT_ROUTES
                 std::cout << "Requested Route: " << path << std::endl;
                 std::cout << "HTTP Version: " << version << std::endl;
 
-                // Weiterverarbeitung basierend auf der Methode
                 if (method == "GET") {
                     callRegisteredRoute(GET, path, buffer, Client);
                 } else if (method == "POST") {
@@ -342,36 +374,38 @@ class WEBSERVE
 
         void serveFiles()
         {
-            std::string path = "./static";
-            for (const auto & entry : std::filesystem::directory_iterator(path))
+            const std::string dir = "./static";
+            for (auto& entry : std::filesystem::directory_iterator(dir))
             {
-                if(entry.path().extension() == ".html")
-                {
-                    string route = "/" + entry.path().filename().string();
-                    string data = readHTMLFile(entry.path().string());
-                    HTTP_CLIENT_ROUTES::route GetHTML = { route , [data](char* request, SOCKET Client) {
-                        sendResponse(Client, HTTP_VSTANDART, data);
-                    }};
-                    server->registerRoute(GET, GetHTML);
-                }
+                auto ext      = entry.path().extension().string();
+                auto filename = entry.path().filename().string();
+                auto route    = "/" + filename;
+                auto fullpath = entry.path().string();
+
+                std::string contentType;
+                if      (ext == ".html") contentType = "text/html; charset=utf-8";
+                else if (ext == ".css")  contentType = "text/css; charset=utf-8";
+                else if (ext == ".js")   contentType = "application/javascript; charset=utf-8";
+                else                     continue;
+
+                HTTP_CLIENT_ROUTES::route r {
+                    route,
+                    [this, fullpath, contentType](char*, SOCKET client) {
+                        std::string data = this->readFile(fullpath);
+                        sendResponse(client, HTTP_VSTANDART, data, contentType);
+                    }
+                };
+                server->registerRoute(GET, r);
             }
         }
 
-        std::string readHTMLFile(string path)
+        static std::string readFile(const std::string& path)
         {
-            std::ifstream file(path);
-            if (!file.is_open())
-            {
-            std::cerr << "Failed to open file: " << path << std::endl;
-                return "Notfound";
-            }
-
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-            file.close();
-
-            std::string content = buffer.str();
-            return content; 
+            std::ifstream ifs(path, std::ios::binary);
+            if (!ifs) return "";
+            std::ostringstream ss;
+            ss << ifs.rdbuf();
+            return ss.str();
         }
 };
 
@@ -395,11 +429,12 @@ int main ()
     client.registerRoute(GET, Get2);
 
     WEBSERVE wclient(&client);
-
-    client.Listen();
-    for (const auto & route : client.GET_ROUTES)
+    auto routes = client.createRouteMap();
+    for (const auto & route : routes)
     {
-        std::cout << route.first;
+        std::cout << route << std::endl;
     }
+    client.Listen();
+
     return 0 ;
 }
