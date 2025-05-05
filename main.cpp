@@ -18,9 +18,6 @@ struct sockaddr_in SERVER;
 hostent* localHost; 
 char* localIP; 
 using std::string; 
-#define CONNECTED 1
-#define DISCONNECTED 2
-#define INVALID 3
 
 #define GET 1
 #define POST 2
@@ -39,10 +36,10 @@ class HTTP_CLIENT_ROUTES
         std::map<string, std::function<void(char* request, SOCKET Client)>> POST_ROUTES; 
         std::map<string, std::function<void(char* request, SOCKET Client)>> DELETE_ROUTES; 
         std::map<string, std::function<void(char* request, SOCKET Client)>> PUT_ROUTES; 
-        std::function<void()> errorhandler; 
+        std::function<void(SOCKET Client, string type)> errorhandler; 
 
 
-        HTTP_CLIENT_ROUTES(route _Get, route _Post, route _Delete, route _Put, std::function<void()> _errorhandler)
+        HTTP_CLIENT_ROUTES(route _Get, route _Post, route _Delete, route _Put, std::function<void(SOCKET Client, string type)> _errorhandler)
         {
             GET_ROUTES.insert(std::make_pair(_Get.route, _Get.handler));
             POST_ROUTES.insert(std::make_pair(_Post.route, _Post.handler));
@@ -69,7 +66,7 @@ class HTTP_CLIENT_ROUTES
                     PUT_ROUTES.insert(std::make_pair(newRoute.route, newRoute.handler));
                     break;
                 default:
-                    errorhandler();
+                    errorhandler(LISTEN_ON, "Routenregristrierung");
                     break; 
             }
         }
@@ -114,6 +111,7 @@ class HTTP_CLIENT_ROUTES
         SOCKET LISTEN_ON;
         void recieveAndFallBack(SOCKET Client)
         {
+            system("cls");
             std::string request; 
             char buffer[1024];
             int bytesReceived; 
@@ -151,7 +149,7 @@ class HTTP_CLIENT_ROUTES
                 } else if (method == "DELETE") {
                     callRegisteredRoute(_DELETE, path, buffer, Client);
                 } else {
-                    errorhandler();
+                    errorhandler(LISTEN_ON, "Aufruf der Fallbackfuntion");
                 }
             }
             closesocket(Client);
@@ -168,7 +166,7 @@ class HTTP_CLIENT_ROUTES
                         it->second(request, Client);
                     } else {
                         std::cerr << "GET route not found: " << route << std::endl;
-                        errorhandler();
+                        errorhandler(LISTEN_ON, "Route nicht gefunden");
                     }
                     break;
                 }
@@ -179,7 +177,7 @@ class HTTP_CLIENT_ROUTES
                         it->second(request, Client); 
                     } else {
                         std::cerr << "POST route not found: " << route << std::endl;
-                        errorhandler();
+                        errorhandler(LISTEN_ON, "Route nicht gefunden");
                     }
                     break;
                 }
@@ -190,7 +188,7 @@ class HTTP_CLIENT_ROUTES
                         it->second(request, Client);
                     } else {
                         std::cerr << "DELETE route not found: " << route << std::endl;
-                        errorhandler();
+                        errorhandler(LISTEN_ON, "Route nicht gefunden");
                     }
                     break;
                 }
@@ -201,13 +199,13 @@ class HTTP_CLIENT_ROUTES
                         it->second(request, Client);
                     } else {
                         std::cerr << "PUT route not found: " << route << std::endl;
-                        errorhandler();
+                        errorhandler(LISTEN_ON, "Route nicht gefunden");
                     }
                     break;
                 }
                 default:
                     std::cerr << "Unsupported HTTP method: " << method << std::endl;
-                    errorhandler();
+                    errorhandler(LISTEN_ON, "Route nicht gefunden");
                     break;
             }
         }
@@ -312,7 +310,6 @@ void sendResponse(SOCKET CLIENT, const string& httpV, const string& body, const 
     HTTP_RESPONSE http(CLIENT, contentType, "no-store", httpV, OK);
     http.resBuff = body;
     char* response = http.build_res(); 
-
     std::cout << response << std::endl;
     send(CLIENT, response , strlen(response), 0 );
     delete[] response; // korrekt: delete[] statt delete
@@ -421,11 +418,20 @@ int main ()
     {
         sendResponse(Client, HTTP_VSTANDART, "Moin"); 
     }};
-    HTTP_CLIENT_ROUTES::route Post = {"/", [](char* request, SOCKET Client){ }};
-    HTTP_CLIENT_ROUTES::route Put = {"/", [](char* request, SOCKET Client){ }};
-    HTTP_CLIENT_ROUTES::route Delete = {"/", [](char* request, SOCKET Client){ }};
-    std::function<void()> Errorh = []() {}; 
-    HTTP_CLIENT_ROUTES client(Get,Post,Delete,Put,Errorh); 
+    HTTP_CLIENT_ROUTES::route Post = {"/", [](char* request, SOCKET Client) {
+        sendResponse(Client, HTTP_VSTANDART, "Post route response");
+    }};
+    HTTP_CLIENT_ROUTES::route Put = {"/", [](char* request, SOCKET Client) {
+        sendResponse(Client, HTTP_VSTANDART, "Put route response");
+    }};
+    HTTP_CLIENT_ROUTES::route Delete = {"/", [](char* request, SOCKET Client) {
+        sendResponse(Client, HTTP_VSTANDART, "Delete route response");
+    }};
+    std::function<void(SOCKET, string type)> Errorh = [](SOCKET Client, string Type) {
+        sendResponse(Client, HTTP_VSTANDART, "<html><body>Error 500 Internal Server Error</body></html>", "text/html");
+        std::cout << Type << std::endl; 
+    }; 
+    HTTP_CLIENT_ROUTES client(Get, Post, Delete, Put, Errorh); 
     client.registerRoute(GET, Get2);
 
     WEBSERVE wclient(&client);
